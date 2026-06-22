@@ -47,6 +47,7 @@ import "./undo"
 
 import './desktop.js';
 
+import "./interface/thematic_tool"
 import "./interface/setup_settings"
 import "./interface/settings_window"
 import "./edit_sessions"
