@@ -70,7 +70,7 @@ jobs:
           }
           echo "ver=$ver" >> $env:GITHUB_OUTPUT
       - name: Package NSIS installer
-        run: npx electron-builder --win --x64 --publish=never --config.artifactName="Blockbench_\${arch}_${{ steps.version.outputs.ver }}.\${ext}"
+        run: npx electron-builder --win --x64 --publish=never --config.forceCodeSigning=false --config.artifactName="Blockbench_\${arch}_${{ steps.version.outputs.ver }}.\${ext}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
