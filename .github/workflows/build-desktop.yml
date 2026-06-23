@@ -1,0 +1,82 @@
+name: Build Desktop (macOS + Windows)
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version override (e.g. 5.1.4-thematic.1)'
+        required: false
+        type: string
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build bundle
+        run: npm run build-electron
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event.inputs.version }}" != "" ]; then
+            echo "ver=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "ver=$(node -p "require('./package.json').version")-thematic.$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+          fi
+      - name: Package DMG
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish=never --config.artifactName="Blockbench_\${arch}_${{ steps.version.outputs.ver }}.\${ext}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blockbench-macOS-${{ matrix.arch }}-${{ steps.version.outputs.ver }}
+          path: dist-electron/*.dmg
+          retention-days: 90
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build bundle
+        run: npm run build-electron
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if (-not $ver) {
+            $pkg = Get-Content package.json | ConvertFrom-Json
+            $ver = "$($pkg.version)-thematic.$(Get-Date -Format 'yyyyMMddHHmmss')"
+          }
+          echo "ver=$ver" >> $env:GITHUB_OUTPUT
+      - name: Package NSIS installer
+        run: npx electron-builder --win --x64 --publish=never --config.artifactName="Blockbench_\${arch}_${{ steps.version.outputs.ver }}.\${ext}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blockbench-Windows-x64-${{ steps.version.outputs.ver }}
+          path: dist-electron/*.exe
+          retention-days: 90
