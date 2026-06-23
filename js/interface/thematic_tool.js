@@ -3,6 +3,26 @@ import { Interface } from "./interface";
 import { fs, PathModule, child_process } from "../native_apis";
 import { loadModelFile } from "../io/io";
 import { Animation } from "../animations/animation";
+import { platform, tmpdir } from "os";
+
+const IS_WIN = platform() === 'win32';
+const CURL = IS_WIN ? 'curl.exe' : 'curl';
+const GRADLEW = IS_WIN ? 'gradlew.bat' : './gradlew';
+
+function curlPost(url, body) {
+    const dir = (typeof app !== 'undefined' && app.getPath) ? app.getPath('temp') : tmpdir();
+    const tmp = PathModule.join(dir, `thematic_${Date.now()}.json`);
+    fs.writeFileSync(tmp, body, 'utf-8');
+    child_process.exec(`${CURL} -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d @${tmp} ${url}`, { env: process.env }, () => {});
+    setTimeout(() => { try { fs.unlinkSync(tmp); } catch (e) {} }, 1000);
+}
+
+function statusCheck() {
+    try {
+        child_process.execSync(`${CURL} -s --max-time 2 http://localhost:8000/api/status`, { timeout: 3000, encoding: 'utf-8', env: process.env });
+        return true;
+    } catch (e) { return false; }
+}
 
 let ROOT = (typeof localStorage !== 'undefined' && localStorage.getItem('thematic_project_root')) || '/Users/alexw/IdeaProjects/Thematic-Collections';
 const TITLE = 'Thematic Animations';
@@ -49,7 +69,7 @@ function git(args) {
     try {
         const cmd = 'git ' + args.map(a => {
             if (typeof a === 'string' && (a.includes(' ') || a.includes('"'))) {
-                return "'" + a.replace(/'/g, "'\\''") + "'";
+                return IS_WIN ? `"${a.replace(/"/g, '\\"')}"` : `'${a.replace(/'/g, "'\\''")}'`;
             }
             return a;
         }).join(' ');
@@ -610,9 +630,7 @@ Interface.definePanels(function() {
                     ];
                     this.status = `${anims.length} anims, ${geos.length} geo models, ${gfs.length} changed`;
                     if (this.launching === 'running') {
-                        try {
-                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
-                        } catch (e) { this.launching = false; }
+                        if (!statusCheck()) this.launching = false;
                     }
                     if (Project) {
                         if (Project.uuid === this.bbProject) {
@@ -651,11 +669,7 @@ Interface.definePanels(function() {
                         const name = PathModule.basename(this.sel);
                         const content = JSON.stringify(d);
                         const payload = JSON.stringify({ file: name, content });
-                        child_process.exec(
-                            `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${payload.replace(/'/g, "'\\''")}' http://localhost:8000/api/reload`,
-                            { env: process.env },
-                            () => {}
-                        );
+                        curlPost('http://localhost:8000/api/reload', payload);
                         this._lastSync = null;
                         this.syncToGame();
                         this.refresh();
@@ -780,11 +794,7 @@ Interface.definePanels(function() {
                         const name = PathModule.basename(fp);
                         const content = JSON.stringify(readJSON(fp));
                         const payload = JSON.stringify({ file: name, content });
-                        child_process.exec(
-                            `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${payload.replace(/'/g, "'\\''")}' http://localhost:8000/api/reload`,
-                            { env: process.env },
-                            () => {}
-                        );
+                        curlPost('http://localhost:8000/api/reload', payload);
                     }
                     this._lastSync = null;
                     this.syncToGame();
@@ -910,19 +920,13 @@ Interface.definePanels(function() {
                 },
                 onTest() {
                     const self = this;
-                    const check = () => {
-                        try {
-                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
-                            return true;
-                        } catch (e) { return false; }
-                    };
-                    if (check()) { self.launching = 'running'; return; }
+                    if (statusCheck()) { self.launching = 'running'; return; }
                     if (self._launchInterval) { clearInterval(self._launchInterval); self._launchInterval = null; }
                     this.launching = true;
                     console.log('[Thematic] Launching game from:', ROOT);
                     Blockbench.showQuickMessage('Launching Minecraft client...', 2000);
                     try {
-                        child_process.exec('./gradlew runClient', { cwd: ROOT, env: process.env });
+                        child_process.exec(`${GRADLEW} runClient`, { cwd: ROOT, env: process.env });
                         console.log('[Thematic] Gradle command issued');
                     } catch (e) {
                         console.error('[Thematic] Launch failed:', e.message);
@@ -933,7 +937,7 @@ Interface.definePanels(function() {
                     let tries = 0;
                     self._launchInterval = setInterval(() => {
                         tries++;
-                        const running = check();
+                        const running = statusCheck();
                         console.log(`[Thematic] Waiting for game... try ${tries} running=${running}`);
                         if (running) { clearInterval(self._launchInterval); self._launchInterval = null; self.launching = 'running'; }
                         else if (tries > 300) { clearInterval(self._launchInterval); self._launchInterval = null; self.launching = false; console.log('[Thematic] Game did not start within timeout'); }
@@ -943,7 +947,11 @@ Interface.definePanels(function() {
                     console.log('[Thematic] Killing game...');
                     if (this._launchInterval) { clearInterval(this._launchInterval); this._launchInterval = null; console.log('[Thematic] Stopped launch polling'); }
                     try {
-                        child_process.execSync("pkill -f 'gradlew runClient' || pkill -f 'minecraft.client.main.Main'", { timeout: 5000, encoding: 'utf-8', env: process.env });
+                        if (IS_WIN) {
+                            child_process.execSync('taskkill /F /IM java.exe 2>nul', { timeout: 5000, encoding: 'utf-8', env: process.env });
+                        } else {
+                            child_process.execSync("pkill -f 'gradlew runClient' || pkill -f 'minecraft.client.main.Main'", { timeout: 5000, encoding: 'utf-8', env: process.env });
+                        }
                         this.launching = false;
                         console.log('[Thematic] Game killed');
                         Blockbench.showQuickMessage('Game killed', 2000);
@@ -962,11 +970,7 @@ Interface.definePanels(function() {
                     });
                     if (data === this._lastSync) return;
                     this._lastSync = data;
-                    child_process.exec(
-                        `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${data.replace(/'/g, "'\\''")}' http://localhost:8000/api/animation`,
-                        { env: process.env },
-                        () => {}
-                    );
+                    curlPost('http://localhost:8000/api/animation', data);
                 },
                 openSuit(s) {
                     this.suitEdit = JSON.parse(JSON.stringify(s));
@@ -1038,11 +1042,10 @@ Interface.definePanels(function() {
                 if (!Project) {
                     setTimeout(() => this.openProject(), 300);
                 }
-                try {
-                    child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
+                if (statusCheck()) {
                     this.launching = 'running';
                     console.log('[Thematic] Game already running on localhost:8000');
-                } catch (e) { console.log('[Thematic] No game running on localhost:8000'); }
+                } else { console.log('[Thematic] No game running on localhost:8000'); }
             },
             mounted() {
                 const self = this;
