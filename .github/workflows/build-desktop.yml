@@ -80,7 +80,7 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [build-macos, build-windows]
+    needs: [version, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
