@@ -53,7 +53,8 @@ function git(args) {
             }
             return a;
         }).join(' ');
-        const out = child_process.execSync(cmd, { cwd: r, encoding: 'utf-8', maxBuffer: 10485760, timeout: 30000 }).trim();
+        const env = Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0' });
+        const out = child_process.execSync(cmd, { cwd: r, encoding: 'utf-8', maxBuffer: 10485760, timeout: 30000, env }).trim();
         return { ok: true, out, err: '' };
     } catch (e) { return { ok: false, out: (e.stdout || '').trim(), err: (e.stderr || e.message || '').trim() }; }
 }
@@ -610,7 +611,7 @@ Interface.definePanels(function() {
                     this.status = `${anims.length} anims, ${geos.length} geo models, ${gfs.length} changed`;
                     if (this.launching === 'running') {
                         try {
-                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8' });
+                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
                         } catch (e) { this.launching = false; }
                     }
                     if (Project) {
@@ -652,6 +653,7 @@ Interface.definePanels(function() {
                         const payload = JSON.stringify({ file: name, content });
                         child_process.exec(
                             `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${payload.replace(/'/g, "'\\''")}' http://localhost:8000/api/reload`,
+                            { env: process.env },
                             () => {}
                         );
                         this._lastSync = null;
@@ -780,6 +782,7 @@ Interface.definePanels(function() {
                         const payload = JSON.stringify({ file: name, content });
                         child_process.exec(
                             `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${payload.replace(/'/g, "'\\''")}' http://localhost:8000/api/reload`,
+                            { env: process.env },
                             () => {}
                         );
                     }
@@ -909,7 +912,7 @@ Interface.definePanels(function() {
                     const self = this;
                     const check = () => {
                         try {
-                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8' });
+                            child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
                             return true;
                         } catch (e) { return false; }
                     };
@@ -919,7 +922,7 @@ Interface.definePanels(function() {
                     console.log('[Thematic] Launching game from:', ROOT);
                     Blockbench.showQuickMessage('Launching Minecraft client...', 2000);
                     try {
-                        child_process.exec('./gradlew runClient', { cwd: ROOT });
+                        child_process.exec('./gradlew runClient', { cwd: ROOT, env: process.env });
                         console.log('[Thematic] Gradle command issued');
                     } catch (e) {
                         console.error('[Thematic] Launch failed:', e.message);
@@ -940,7 +943,7 @@ Interface.definePanels(function() {
                     console.log('[Thematic] Killing game...');
                     if (this._launchInterval) { clearInterval(this._launchInterval); this._launchInterval = null; console.log('[Thematic] Stopped launch polling'); }
                     try {
-                        child_process.execSync("pkill -f 'gradlew runClient' || pkill -f 'minecraft.client.main.Main'", { timeout: 5000, encoding: 'utf-8' });
+                        child_process.execSync("pkill -f 'gradlew runClient' || pkill -f 'minecraft.client.main.Main'", { timeout: 5000, encoding: 'utf-8', env: process.env });
                         this.launching = false;
                         console.log('[Thematic] Game killed');
                         Blockbench.showQuickMessage('Game killed', 2000);
@@ -961,6 +964,7 @@ Interface.definePanels(function() {
                     this._lastSync = data;
                     child_process.exec(
                         `curl -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d '${data.replace(/'/g, "'\\''")}' http://localhost:8000/api/animation`,
+                        { env: process.env },
                         () => {}
                     );
                 },
@@ -1035,7 +1039,7 @@ Interface.definePanels(function() {
                     setTimeout(() => this.openProject(), 300);
                 }
                 try {
-                    child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8' });
+                    child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8', env: process.env });
                     this.launching = 'running';
                     console.log('[Thematic] Game already running on localhost:8000');
                 } catch (e) { console.log('[Thematic] No game running on localhost:8000'); }
