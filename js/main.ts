@@ -47,7 +47,6 @@ import "./undo"
 
 import './desktop.js';
 
-import "./interface/thematic_tool"
 import "./interface/setup_settings"
 import "./interface/settings_window"
 import "./edit_sessions"
@@ -126,5 +125,6 @@ import "./formats/minecraft/skin"
 import "./formats/image"
 import "./formats/bedrock/bedrock_voxel_shape"
 import "./formats/bedrock/bedrock_multi_file"
+import "./interface/thematic_tool"
 import "./boot_loader"
 import "./globals"
