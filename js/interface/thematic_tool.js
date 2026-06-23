@@ -4,8 +4,28 @@ import { fs, PathModule, child_process } from "../native_apis";
 import { loadModelFile } from "../io/io";
 import { Animation } from "../animations/animation";
 
-const ROOT = '/Users/alexw/IdeaProjects/Thematic-Collections';
+let ROOT = (typeof localStorage !== 'undefined' && localStorage.getItem('thematic_project_root')) || '/Users/alexw/IdeaProjects/Thematic-Collections';
 const TITLE = 'Thematic Animations';
+
+function setRoot(path) {
+    if (!path || !fs.existsSync(path)) return false;
+    ROOT = path;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('thematic_project_root', path);
+    return true;
+}
+
+function resolveRootFromPath(filePath) {
+    let dir = PathModule.dirname(filePath);
+    for (let i = 0; i < 6; i++) {
+        if (fs.existsSync(PathModule.join(dir, 'settings.gradle')) || fs.existsSync(PathModule.join(dir, 'build.gradle'))) {
+            return dir;
+        }
+        const parent = PathModule.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    return null;
+}
 
 function armorDir() {
     const d = PathModule.join(ROOT, '@animations', 'armor');
@@ -419,6 +439,7 @@ Interface.definePanels(function() {
 <button @click="newAnim">+ New</button>
 <button @click="onTest">\u25B6 Test</button>
 <button @click="onKill" style="color:#e55">\u25A0 Kill</button>
+<input v-model="projectRoot" @change="updateRoot" placeholder="Project path..." style="flex:1;min-width:120px;padding:3px 6px;background:#222;border:1px solid #555;color:#ccc;border-radius:3px;font-size:10px" :title="projectRoot" />
 <label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:3px;margin-left:auto"><input type="checkbox" v-model="syncPose" style="margin:0" />Sync Pose</label>
 </div>
 <div class="tm-tabs">
@@ -546,7 +567,8 @@ Interface.definePanels(function() {
                     status: 'Ready', branch: '', tab: 'anim',
                     items: [], gits: [], recent: [], vars: {},
                     checked: {}, launching: false, bbProject: null,
-                    syncPose: true,
+                    syncPose: true, _launchInterval: null,
+                    projectRoot: ROOT,
                     suits: [], suitSearch: '', suitEdit: null, suitTab: 'abilities',
                 };
             },
@@ -648,6 +670,18 @@ Interface.definePanels(function() {
                     delete this.vars[k];
                     this.onVar();
                 },
+                updateRoot() {
+                    const trimmed = (this.projectRoot || '').trim();
+                    if (trimmed && trimmed !== ROOT) {
+                        if (setRoot(trimmed)) {
+                            console.log('[Thematic] Project root updated:', ROOT);
+                            this.refresh();
+                        } else {
+                            console.log('[Thematic] Invalid project path:', trimmed);
+                            this.projectRoot = ROOT;
+                        }
+                    }
+                },
                 openProject() {
                     const bb = bbPath();
                     if (!bb) { Blockbench.showMessageBox({ title: 'Error', message: 'ArmorAnimations.bbmodel not found.', icon: 'warning' }); return; }
@@ -655,6 +689,12 @@ Interface.definePanels(function() {
                     Blockbench.read([bb], {}, files => {
                         if (files && files[0]) {
                             loadModelFile(files[0]);
+                            const detected = resolveRootFromPath(bb);
+                            if (detected && detected !== ROOT) {
+                                setRoot(detected);
+                                self.projectRoot = ROOT;
+                                console.log('[Thematic] Auto-detected project root:', ROOT);
+                            }
                             setTimeout(() => {
                                 if (Project) {
                                     self.bbProject = Project.uuid;
@@ -874,25 +914,37 @@ Interface.definePanels(function() {
                         } catch (e) { return false; }
                     };
                     if (check()) { self.launching = 'running'; return; }
+                    if (self._launchInterval) { clearInterval(self._launchInterval); self._launchInterval = null; }
                     this.launching = true;
-                    try { child_process.exec('./gradlew runClient', { cwd: ROOT }); } catch (e) {
+                    console.log('[Thematic] Launching game from:', ROOT);
+                    Blockbench.showQuickMessage('Launching Minecraft client...', 2000);
+                    try {
+                        child_process.exec('./gradlew runClient', { cwd: ROOT });
+                        console.log('[Thematic] Gradle command issued');
+                    } catch (e) {
+                        console.error('[Thematic] Launch failed:', e.message);
                         this.launching = false;
-                        Blockbench.showMessageBox({ title: 'Error', message: 'Failed: ' + e.message, icon: 'error' });
+                        Blockbench.showMessageBox({ title: 'Launch Error', message: 'Failed to start: ' + e.message + '\n\nEnsure the project directory exists:\n' + ROOT, icon: 'error' });
                         return;
                     }
                     let tries = 0;
-                    const interval = setInterval(() => {
+                    self._launchInterval = setInterval(() => {
                         tries++;
-                        if (check()) { clearInterval(interval); self.launching = 'running'; }
-                        else if (tries > 300) { clearInterval(interval); self.launching = false; }
+                        const running = check();
+                        console.log(`[Thematic] Waiting for game... try ${tries} running=${running}`);
+                        if (running) { clearInterval(self._launchInterval); self._launchInterval = null; self.launching = 'running'; }
+                        else if (tries > 300) { clearInterval(self._launchInterval); self._launchInterval = null; self.launching = false; console.log('[Thematic] Game did not start within timeout'); }
                     }, 2000);
                 },
                 onKill() {
+                    console.log('[Thematic] Killing game...');
+                    if (this._launchInterval) { clearInterval(this._launchInterval); this._launchInterval = null; console.log('[Thematic] Stopped launch polling'); }
                     try {
                         child_process.execSync("pkill -f 'gradlew runClient' || pkill -f 'minecraft.client.main.Main'", { timeout: 5000, encoding: 'utf-8' });
                         this.launching = false;
+                        console.log('[Thematic] Game killed');
                         Blockbench.showQuickMessage('Game killed', 2000);
-                    } catch (e) { this.launching = false; }
+                    } catch (e) { this.launching = false; console.log('[Thematic] Kill result:', e.message); }
                 },
                 syncToGame() {
                     if (!Animation || !Animation.selected || !Timeline) return;
@@ -978,13 +1030,15 @@ Interface.definePanels(function() {
             },
             created() {
                 this.refresh();
+                console.log('[Thematic] Panel created, ROOT:', ROOT);
                 if (!Project) {
                     setTimeout(() => this.openProject(), 300);
                 }
                 try {
                     child_process.execSync('curl -s --max-time 2 http://localhost:8000/api/status', { timeout: 3000, encoding: 'utf-8' });
                     this.launching = 'running';
-                } catch (e) {}
+                    console.log('[Thematic] Game already running on localhost:8000');
+                } catch (e) { console.log('[Thematic] No game running on localhost:8000'); }
             },
             mounted() {
                 const self = this;
