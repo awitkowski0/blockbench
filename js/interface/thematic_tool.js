@@ -181,12 +181,6 @@ function availableSounds() {
     } catch (e) { return []; }
 }
 
-const LEG_BOOT = {
-    armorLeftLeg: 'armorLeftBoot', armorRightLeg: 'armorRightBoot',
-    leftLeg: 'armorLeftBoot', rightLeg: 'armorRightBoot',
-    bipedLeftLeg: 'armorLeftBoot', bipedRightLeg: 'armorRightBoot',
-};
-
 function convertBones(bones) {
     if (!bones) return {};
     const animators = {};
@@ -263,14 +257,6 @@ function convertBones(bones) {
             }
         }
         if (kf.length) animators[uuid] = { name: boneName, type: 'bone', rotation_global: false, quaternion_interpolation: false, keyframes: kf };
-    }
-    for (const [leg, boot] of Object.entries(LEG_BOOT)) {
-        const legAnimator = Object.values(animators).find(a => a.name.toLowerCase() === leg.toLowerCase() || a.name.toLowerCase().replace(/\.\d+$/, '') === leg.toLowerCase());
-        if (!legAnimator) continue;
-        const bootUUID = findUUID(boot);
-        const bootAnimator = Object.values(animators).find(a => a.name && a.name.toLowerCase() === boot.toLowerCase());
-        if (bootAnimator) continue;
-        animators[bootUUID] = { name: boot, type: 'bone', rotation_global: false, quaternion_interpolation: false, keyframes: JSON.parse(JSON.stringify(legAnimator.keyframes)) };
     }
     return animators;
 }
@@ -483,7 +469,6 @@ Interface.definePanels(function() {
 <div class="tm-hint">Double-click to open in editor</div>
 
 <div v-if="sel && selType==='anim'" class="tm-detail">
-<div class="tm-x"><input type="checkbox" v-model="legBoot" id="clb" /><label for="clb">Auto-copy Leg \u2192 Boot</label></div>
 <div style="padding:2px 8px;font-size:11px;color:#888">Custom Variables</div>
 <div v-for="(v,k) in vars" class="tm-v" :key="k">
 <label style="font-size:10px;width:auto;min-width:70px">{{ k }}</label>
@@ -584,7 +569,7 @@ Interface.definePanels(function() {
 </div>`,
             data() {
                 return {
-                    search: '', sel: null, selType: null, legBoot: true, cmsg: '',
+                    search: '', sel: null, selType: null, cmsg: '',
                     status: 'Ready', branch: '', tab: 'anim',
                     items: [], gits: [], recent: [], vars: {},
                     checked: {}, launching: false, bbProject: null,
