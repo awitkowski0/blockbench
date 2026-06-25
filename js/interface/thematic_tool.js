@@ -1,16 +1,15 @@
 import { BARS } from "./toolbars";
 import { Interface } from "./interface";
-import { fs, PathModule, child_process } from "../native_apis";
+import { fs, PathModule, child_process, os } from "../native_apis";
 import { loadModelFile } from "../io/io";
 import { Animation } from "../animations/animation";
-import { platform, tmpdir } from "os";
 
-const IS_WIN = platform() === 'win32';
+const IS_WIN = os.platform() === 'win32';
 const CURL = IS_WIN ? 'curl.exe' : 'curl';
 const GRADLEW = IS_WIN ? 'gradlew.bat' : './gradlew';
 
 function curlPost(url, body) {
-    const dir = (typeof app !== 'undefined' && app.getPath) ? app.getPath('temp') : tmpdir();
+    const dir = (typeof app !== 'undefined' && app.getPath) ? app.getPath('temp') : os.tmpdir();
     const tmp = PathModule.join(dir, `thematic_${Date.now()}.json`);
     fs.writeFileSync(tmp, body, 'utf-8');
     child_process.exec(`${CURL} -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d @${tmp} ${url}`, { env: process.env }, () => {});
