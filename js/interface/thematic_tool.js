@@ -1,6 +1,6 @@
 import { BARS } from "./toolbars";
 import { Interface } from "./interface";
-import { fs, PathModule, child_process, os } from "../native_apis";
+import { fs, PathModule, child_process, os, process } from "../native_apis";
 import { loadModelFile } from "../io/io";
 import { Animation } from "../animations/animation";
 
