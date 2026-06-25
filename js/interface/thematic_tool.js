@@ -65,8 +65,9 @@ function geoDir() {
 
 function git(args) {
     const r = ROOT; if (!r) return { ok: false, out: '' };
+    let cmd = '';
     try {
-        const cmd = 'git ' + args.map(a => {
+        cmd = 'git ' + args.map(a => {
             if (typeof a === 'string' && (a.includes(' ') || a.includes('"'))) {
                 return IS_WIN ? `"${a.replace(/"/g, '\\"')}"` : `'${a.replace(/'/g, "'\\''")}'`;
             }
@@ -75,7 +76,7 @@ function git(args) {
         const env = Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0' });
         const out = child_process.execSync(cmd, { cwd: r, encoding: 'utf-8', maxBuffer: 10485760, timeout: 30000, env }).trim();
         return { ok: true, out, err: '' };
-    } catch (e) { return { ok: false, out: (e.stdout || '').trim(), err: (e.stderr || e.message || '').trim() }; }
+    } catch (e) { console.error('[Thematic] git error:', cmd, e.stderr || e.message); return { ok: false, out: (e.stdout || '').trim(), err: (e.stderr || e.message || '').trim() }; }
 }
 
 function gitFiles() {
@@ -85,7 +86,7 @@ function gitFiles() {
     if (!dir) return [];
     let realDir = dir;
     try { realDir = fs.realpathSync(dir); } catch (e) {}
-    const rel = PathModule.relative(ROOT, realDir);
+    const rel = PathModule.relative(ROOT, realDir).replace(/\\/g, '/');
     return r.out.split('\n').filter(l => l.trim()).map(l => {
         const raw = l.substring(3).trim();
         const file = raw.includes(' -> ') ? raw.split(' -> ').pop().trim() : raw;
@@ -450,33 +451,21 @@ Interface.definePanels(function() {
 </div>
 <div class="tm-tabs">
 <div class="tab" :class="{active: tab==='files'}" @click="tab='files'">Files ({{ filesCount }})</div>
-<div class="tab" :class="{active: tab==='anim'}" @click="tab='anim'">Animations ({{ animCount }})</div>
 <div class="tab" :class="{active: tab==='geo'}" @click="tab='geo'">Geo Models ({{ geoCount }})</div>
 <div class="tab" :class="{active: tab==='suits'}" @click="tab='suits'">Suits ({{ suitCount }})</div>
 </div>
 <div v-if="launching" class="tm-banner">{{ launching === 'running' ? '\u25B6 Game running — edit anims, hit play' : '\u23F3 Launching game...' }}</div>
 
-<div v-if="tab==='anim'||tab==='geo'" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+<div v-if="tab==='geo'" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
 <input class="tm-s" v-model="search" placeholder="Search..." />
 <div class="tm-l">
 <div v-if="!filtered.length" class="tm-e">Nothing found</div>
-<div v-for="it in filtered" :key="it.id+it.type" class="tm-i" :class="{sel: it.path===sel}" @click="pick(it.path)" @dblclick="openFile(it)">
+<div v-for="it in filtered" :key="it.id" class="tm-i" :class="{sel: it.path===sel}" @click="pick(it.path)" @dblclick="openFile(it)">
 <span class="tm-d" :class="it.gc"></span><span class="tm-n">{{ it.id }}</span>
-<span class="tm-badge" :class="it.type">{{ it.type === 'anim' ? 'ANIM' : 'GEO' }}</span>
+<span class="tm-badge geo">GEO</span>
 </div>
 </div>
 <div class="tm-hint">Double-click to open in editor</div>
-
-<div v-if="sel && selType==='anim'" class="tm-detail">
-<div style="padding:2px 8px;font-size:11px;color:#888">Custom Variables</div>
-<div v-for="(v,k) in vars" class="tm-v" :key="k">
-<label style="font-size:10px;width:auto;min-width:70px">{{ k }}</label>
-<input type="range" min="-100" max="100" step="0.01" v-model.number="vars[k]" @input="onVar" />
-<span class="vv">{{ Number(v).toFixed(2) }}</span>
-<button @click="deleteVar(k)" style="padding:0 4px;font-size:10px;color:#e55;background:none;border:none;cursor:pointer">\u2715</button>
-</div>
-<button @click="addVar" style="margin:2px 8px;padding:2px 8px;font-size:10px;background:#222;border:1px solid #444;color:#888;cursor:pointer;border-radius:2px">+ Add Variable</button>
-</div>
 </div>
 
 <div v-if="tab==='files'" class="tm-l">
@@ -490,6 +479,7 @@ Interface.definePanels(function() {
 <input v-model="cmsg" @keydown.enter="onCommit" placeholder="Commit message..." />
                         <button class="p" @click="onCommit">Commit & Push</button>
                         <button @click="onPull">Pull</button>
+                        <button @click="onRevert" style="color:#e55">Revert</button>
 </div>
 <div class="tm-lg"><div v-for="r in recent" :key="r">{{ r }}</div></div>
 <div class="tm-ft"><span>{{ status }}</span><span>{{ branch }}</span></div>
@@ -568,9 +558,9 @@ Interface.definePanels(function() {
 </div>`,
             data() {
                 return {
-                    search: '', sel: null, selType: null, cmsg: '',
-                    status: 'Ready', branch: '', tab: 'anim',
-                    items: [], gits: [], recent: [], vars: {},
+                    search: '', sel: null, cmsg: '',
+                    status: 'Ready', branch: '', tab: 'geo',
+                    items: [], gits: [], recent: [],
                     checked: {}, launching: false, bbProject: null,
                     syncPose: true, _launchInterval: null,
                     projectRoot: ROOT,
@@ -579,8 +569,7 @@ Interface.definePanels(function() {
             },
             computed: {
                 filesCount() { return this.gits.length; },
-                animCount() { return this.items.filter(i => i.type === 'anim').length; },
-                geoCount() { return this.items.filter(i => i.type === 'geo').length; },
+                geoCount() { return this.items.length; },
                 suitCount() { return this.suits.length; },
                 allChecked() { return this.gits.length > 0 && this.gits.every(f => this.checked[f.path]); },
                 filteredSuits() {
@@ -589,16 +578,14 @@ Interface.definePanels(function() {
                     return this.suits.filter(s => s.id && (s.id.toLowerCase().includes(q) || (s.collection && s.collection.toLowerCase().includes(q))));
                 },
                 filtered() {
-                    let list = this.items.filter(i => i.type === this.tab);
-                    if (!this.search) return list;
+                    if (!this.search) return this.items;
                     const q = this.search.toLowerCase();
-                    return list.filter(i => i.id.toLowerCase().includes(q));
+                    return this.items.filter(i => i.id.toLowerCase().includes(q));
                 },
             },
             methods: {
                 refresh() {
                     this.branch = currentBranch();
-                    const anims = listAnims();
                     const geos = listGeoModels();
                     const gfs = gitFiles();
                     const allSuits = listSuits();
@@ -608,11 +595,8 @@ Interface.definePanels(function() {
                         const gf = gfs.find(g => g.path.includes(pid));
                         return gf ? (gf.isNew ? 'b' : 'y') : 'g';
                     }
-                    this.items = [
-                        ...anims.map(a => ({ id: a.id, path: a.path, type: 'anim', gc: gc(a.id) })),
-                        ...geos.map(g => ({ id: g.id, path: g.path, type: 'geo', gc: gc(g.id) })),
-                    ];
-                    this.status = `${anims.length} anims, ${geos.length} geo models, ${gfs.length} changed`;
+                    this.items = geos.map(g => ({ id: g.id, path: g.path, gc: gc(g.id) }));
+                    this.status = `${geos.length} geo models, ${gfs.length} changed`;
                     if (this.launching === 'running') {
                         if (!statusCheck()) this.launching = false;
                     }
@@ -628,47 +612,7 @@ Interface.definePanels(function() {
                     }
                 },
                 pick(fp) {
-                    try {
-                        this.sel = fp;
-                        const d = readJSON(fp);
-                        this.selType = null;
-                        if (!d) return;
-                        this.selType = d.animations ? 'anim' : 'geo';
-                        if (this.selType === 'anim') {
-                            this.vars = Object.assign({}, d.thematic || d.thematic_variables || {});
-                            if (Project && Project.animations) {
-                                const names = Object.keys(d.animations);
-                                const match = Project.animations.find(a => names.includes(a.name));
-                                if (match) match.select();
-                            }
-                        }
-                    } catch (e) { console.error('pick error:', e); }
-                },
-                onVar() {
-                    const d = readJSON(this.sel);
-                    if (d) {
-                        if (!d.thematic) d.thematic = {};
-                        Object.assign(d.thematic, this.vars);
-                        writeJSON(this.sel, d);
-                        const name = PathModule.basename(this.sel);
-                        const content = JSON.stringify(d);
-                        const payload = JSON.stringify({ file: name, content });
-                        curlPost('http://localhost:8000/api/reload', payload);
-                        this._lastSync = null;
-                        this.syncToGame();
-                        this.refresh();
-                    }
-                },
-                addVar() {
-                    Blockbench.textPrompt('Variable name', '', (n) => {
-                        if (!n || !n.trim()) return;
-                        this.vars[n.trim()] = 0;
-                        this.onVar();
-                    });
-                },
-                deleteVar(k) {
-                    delete this.vars[k];
-                    this.onVar();
+                    this.sel = fp;
                 },
                 updateRoot() {
                     const trimmed = (this.projectRoot || '').trim();
@@ -796,65 +740,12 @@ Interface.definePanels(function() {
                 },
                 openFile(it) {
                     try {
-                    if (it.type === 'geo') {
                         const name = it.id;
                         loadGeoModel(it.path);
                         setTimeout(() => this.loadTextures(name), 800);
-                        return;
-                    }
-                    if (!Project || !Project.animations) {
-                        const self = this;
-                        const bb = bbPath();
-                        if (!bb) { Blockbench.showMessageBox({ title: 'Error', message: 'ArmorAnimations.bbmodel not found.', icon: 'warning' }); return; }
-                        Blockbench.read([bb], {}, files => {
-                            if (files && files[0]) {
-                                loadModelFile(files[0]);
-                                const checkInterval = setInterval(() => {
-                                    if (Project && Project.animations) {
-                                        clearInterval(checkInterval);
-                                        self.importSingleAnim(it);
-                                    }
-                                }, 150);
-                                setTimeout(() => clearInterval(checkInterval), 10000);
-                            }
-                        });
-                        return;
-                    }
-                    this.importSingleAnim(it);
                     } catch (e) { console.error('openFile error:', e); }
                 },
-                importSingleAnim(it) {
-                    const data = readJSON(it.path);
-                    if (!data || !data.animations) return;
-                    let added = 0;
-                    for (const [name, ad] of Object.entries(data.animations)) {
-                        try {
-                            let loop = 'once';
-                            if (ad.loop === true || ad.loop === 'loop') loop = 'loop';
-                            else if (ad.loop === 'hold_on_last_frame') loop = 'hold';
-                            const existing = Project.animations.find(a => a.name === name);
-                            if (existing) existing.remove();
-                            const anim = new Animation({
-                                name, length: ad.animation_length || 1, loop,
-                                animators: convertBones(ad.bones || {}),
-                            }).add();
-                            anim.path = it.path;
-                            anim.saved = true;
-                            anim.calculateSnappingFromKeyframes();
-                            anim.setScopeFromAnimators();
-                            if (added === 0) anim.select();
-                            added++;
-                        } catch (e) { console.error(e); }
-                    }
-                    if (added && Timeline && Timeline.update) Timeline.update();
-                    if (added) {
-                        Blockbench.showQuickMessage(`Opened ${added} animation(s)`, 3000);
-                        this._lastSync = null;
-                        if (BarItems.bring_up_all_animations) BarItems.bring_up_all_animations.trigger();
-                    }
-                    if (Project) Project.saved = true;
-                    this.refresh();
-                },
+
                 onCommit() {
                     const msg = this.cmsg.trim();
                     if (!msg) { Blockbench.showMessageBox({ title: 'Error', message: 'Enter a message.', icon: 'warning' }); return; }
@@ -901,6 +792,35 @@ Interface.definePanels(function() {
                     if (!r.ok) { Blockbench.showMessageBox({ title: 'Error', message: r.err, icon: 'error' }); return; }
                     this.refresh();
                     Blockbench.showQuickMessage('Pulled latest from ' + base, 3000);
+                },
+                onRevert() {
+                    const selected = this.gits.filter(f => this.checked[f.path]);
+                    if (!selected.length) { Blockbench.showMessageBox({ title: 'Revert', message: 'No files selected.', icon: 'warning' }); return; }
+                    const self = this;
+                    Blockbench.showMessageBox({
+                        title: 'Revert',
+                        message: 'Discard all changes in ' + selected.length + ' file(s)?\nThis cannot be undone.',
+                        icon: 'warning',
+                        buttons: ['Cancel', 'Revert'],
+                        cancelIndex: 0,
+                    }, function(btn) {
+                        if (btn !== 1) return;
+                        let ok = 0, fail = 0;
+                        for (const f of selected) {
+                            if (f.isNew) {
+                                try { fs.unlinkSync(PathModule.join(ROOT, f.path)); ok++; } catch (e) { fail++; }
+                            } else {
+                                const r = git(['checkout', '--', f.path]);
+                                if (r.ok) ok++; else fail++;
+                            }
+                        }
+                        self.checked = {};
+                        self.refresh();
+                        const msg = fail ? 'Reverted ' + ok + ', failed: ' + fail : 'Reverted ' + ok + ' file(s)';
+                        self.recent.unshift(msg);
+                        self.status = msg;
+                        Blockbench.showQuickMessage(msg, 3000);
+                    });
                 },
                 onTest() {
                     const self = this;
