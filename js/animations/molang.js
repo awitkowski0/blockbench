@@ -4,6 +4,9 @@ Animator.MolangParser.context = {}
 Animator.MolangParser.global_variables = {
 	true: 1,
 	false: 0,
+	'query.forward_speed': 0,
+	'query.sideways_speed': 0,
+	'query.upward_speed': 0,
 	get 'query.delta_time'() {
 		let time = (performance.now() - Timeline.last_frame_timecode) / 1000
 		if (time < 0) time += 1

@@ -3,6 +3,8 @@ import { clipboard } from "../native_apis";
 import { invertMolang } from "../util/molang";
 import { openMolangEditor } from "./molang_editor";
 
+let cachedEffects = null;
+
 export class KeyframeDataPoint {
 	constructor(keyframe) {
 		this.keyframe = keyframe;
@@ -1314,8 +1316,52 @@ Interface.definePanels(function() {
 					Animator.preview()
 					Undo.finishEdit('Remove keyframe data point')
 				},
-				updateLocatorSuggestionList() {
-					Locator.updateAutocompleteList();
+				updateEffectSuggestionList(channel) {
+					const list = document.getElementById('effect_suggestion_list');
+					if (!list) return;
+					if (!cachedEffects) {
+						fetch('http://localhost:8000/api/effects')
+							.then(r => r.json())
+							.then(data => { cachedEffects = data; this.populateEffectList(list, channel, data); })
+							.catch(() => this.populateEffectList(list, channel, null));
+					} else {
+						this.populateEffectList(list, channel, cachedEffects);
+					}
+				},
+				populateEffectList(list, channel, data) {
+					list.innerHTML = '';
+					const isParticle = channel === 'particle';
+					const seen = new Set();
+					if (data && data.particles && isParticle) {
+						for (const id of data.particles) {
+							if (!id || seen.has(id)) continue;
+							seen.add(id);
+							const opt = document.createElement('option');
+							opt.value = id;
+							list.appendChild(opt);
+						}
+					}
+					if (data && data.sounds && !isParticle) {
+						for (const id of data.sounds) {
+							if (!id || seen.has(id)) continue;
+							seen.add(id);
+							const opt = document.createElement('option');
+							opt.value = id;
+							list.appendChild(opt);
+						}
+					}
+					if (!seen.size) {
+						const local = isParticle
+							? Object.keys(Animator.particle_effects || {})
+							: Object.keys(Timeline.waveforms || {});
+						for (const id of local) {
+							if (!id || seen.has(id)) continue;
+							seen.add(id);
+							const opt = document.createElement('option');
+							opt.value = id;
+							list.appendChild(opt);
+						}
+					}
 				},
 				changeBindToActor(event, i) {
 					Undo.initEdit({keyframes: Timeline.selected});
@@ -1487,11 +1533,46 @@ Interface.definePanels(function() {
 						}
 					]).open(event);
 				},
-				autocomplete(text, position) {
-					if (Settings.get('autocomplete_code') == false) return [];
-					let test = MolangAutocomplete.KeyframeContext.autocomplete(text, position);
-					return test;
-				},
+			updateLocatorSuggestionList() {
+				const list = document.getElementById('locator_suggestion_list');
+				if (!list) return;
+				list.innerHTML = '';
+				const seen = new Set();
+				for (const bone of Group.all) {
+					if (!bone.name || seen.has(bone.name)) continue;
+					seen.add(bone.name);
+					const opt = document.createElement('option');
+					opt.value = bone.name;
+					list.appendChild(opt);
+				}
+				for (const loc of Locator.all) {
+					if (!loc.name || seen.has(loc.name)) continue;
+					seen.add(loc.name);
+					const opt = document.createElement('option');
+					opt.value = loc.name;
+					list.appendChild(opt);
+				}
+			},
+			insertMolangQuery(axis, event, data_point_i) {
+				const value = event.target.value;
+				event.target.value = '';
+				if (!value) return;
+				Undo.initEdit({keyframes: Timeline.selected});
+				Timeline.selected.forEach(kf => {
+					if (data_point_i && !kf.data_points[data_point_i]) return;
+					kf.set(axis, value, data_point_i);
+				})
+				Undo.finishEdit('Insert MoLang expression');
+				if (!['effect', 'locator', 'script'].includes(axis)) {
+					Animator.preview();
+					updateKeyframeSelection();
+				}
+			},
+			autocomplete(text, position) {
+				if (Settings.get('autocomplete_code') == false) return [];
+				let test = MolangAutocomplete.KeyframeContext.autocomplete(text, position);
+				return test;
+			},
 				tl,
 				Condition
 			},
@@ -1590,6 +1671,22 @@ Interface.definePanels(function() {
 											:ignoreTabKey="true"
 											:line-numbers="false"
 										/>
+										<select
+											v-if="property.type == 'molang'"
+											class="molang_quick bar_input dark_bordered"
+											@change="insertMolangQuery(key, $event, data_point_i)"
+										>
+											<option value="">MoLang</option>
+											<option value="query.anim_time">query.anim_time</option>
+											<option value="query.life_time">query.life_time</option>
+											<option value="query.delta_time">query.delta_time</option>
+											<option value="query.ground_speed">query.ground_speed</option>
+											<option value="query.yaw_speed">query.yaw_speed</option>
+											<option value="math.sin(query.anim_time)">sin(anim_time)</option>
+											<option value="math.cos(query.anim_time)">cos(anim_time)</option>
+											<option value="math.lerp(0, 1, query.anim_time)">lerp(0,1,anim_time)</option>
+											<option value="query.anim_time * 2">anim_time * 2</option>
+										</select>
 										<input
 											type="checkbox"
 											v-else-if="property.type == 'boolean'"
@@ -1602,8 +1699,8 @@ Interface.definePanels(function() {
 											type="text"
 											class="dark_bordered code keyframe_input tab_target"
 											v-model="data_point[key]"
-											:list="key == 'locator' && 'locator_suggestion_list'"
-											@focus="key == 'locator' && updateLocatorSuggestionList()"
+											:list="key == 'locator' ? 'locator_suggestion_list' : (key == 'effect' ? 'effect_suggestion_list' : undefined)"
+											@focus="key == 'locator' && updateLocatorSuggestionList(); key == 'effect' && updateEffectSuggestionList(channel)"
 											@input="updateInput(key, $event.target.value, data_point_i)"
 										/>
 										<input type="checkbox" v-if="key == 'locator'" :checked="data_point.bind_to_actor" title="${tl('timeline.bind_to_actor')}" @input="changeBindToActor($event, data_point_i)">
@@ -1614,6 +1711,7 @@ Interface.definePanels(function() {
 								</template>
 							</div>
 						</ul>
+						<datalist id="effect_suggestion_list"></datalist>
 					</template>
 				</div>
 			`

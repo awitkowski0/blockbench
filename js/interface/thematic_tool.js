@@ -181,6 +181,37 @@ function availableSounds() {
     } catch (e) { return []; }
 }
 
+function importEffects(anim, ad) {
+    if (!anim || !ad) return;
+    if (!ad.sound_effects && !ad.particle_effects && !ad.timeline) return;
+    if (!anim.animators.effects) {
+        anim.animators.effects = new EffectAnimator(anim);
+    }
+    const ef = anim.animators.effects;
+    if (ad.sound_effects) {
+        for (const ts in ad.sound_effects) {
+            let sounds = ad.sound_effects[ts];
+            if (!(sounds instanceof Array)) sounds = [sounds];
+            ef.addKeyframe({ channel: 'sound', time: parseFloat(ts), data_points: sounds });
+        }
+    }
+    if (ad.particle_effects) {
+        for (const ts in ad.particle_effects) {
+            let particles = ad.particle_effects[ts];
+            if (!(particles instanceof Array)) particles = [particles];
+            particles.forEach(p => { if (p) p.script = p.pre_effect_script; });
+            ef.addKeyframe({ channel: 'particle', time: parseFloat(ts), data_points: particles });
+        }
+    }
+    if (ad.timeline) {
+        for (const ts in ad.timeline) {
+            let entry = ad.timeline[ts];
+            let script = entry instanceof Array ? entry.join('\n') : entry;
+            ef.addKeyframe({ channel: 'timeline', time: parseFloat(ts), data_points: [{ script }] });
+        }
+    }
+}
+
 function convertBones(bones) {
     if (!bones) return {};
     const animators = {};
@@ -370,6 +401,7 @@ BARS.defineActions(function() {
                             name, length: ad.animation_length || 1, loop,
                             animators: convertBones(ad.bones || {}),
                         }).add();
+                        importEffects(anim, ad);
                         anim.path = f.path;
                         anim.saved = true;
                         anim.calculateSnappingFromKeyframes();
@@ -411,12 +443,11 @@ BARS.defineActions(function() {
                 }
                 for (const a of anims) {
                     const n = a.name || a.uuid || 'animation';
-                    out.animations[n] = {
-                        animation_length: a.length || a.animation_length || 1,
-                        loop: a.loop || false,
-                        bones: a.bones || {},
-                    };
-                    if (a.thematic) out.animations[n].thematic = a.thematic;
+                    let compiled = AnimationCodec.codecs.bedrock.compileAnimation(a);
+                    let entry = {};
+                    Object.assign(entry, compiled);
+                    if (a.thematic) entry.thematic = a.thematic;
+                    out.animations[n] = entry;
                 }
                 if (writeJSON(fp, out)) c++;
             }
@@ -447,7 +478,8 @@ Interface.definePanels(function() {
 <button @click="onTest">\u25B6 Test</button>
 <button @click="onKill" style="color:#e55">\u25A0 Kill</button>
 <input v-model="projectRoot" @change="updateRoot" placeholder="Project path..." style="flex:1;min-width:120px;padding:3px 6px;background:#222;border:1px solid #555;color:#ccc;border-radius:3px;font-size:10px" :title="projectRoot" />
-<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:3px;margin-left:auto"><input type="checkbox" v-model="syncPose" style="margin:0" />Sync Pose</label>
+<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:3px"><input type="checkbox" v-model="syncPose" style="margin:0" />Sync Pose</label>
+<label style="font-size:11px;color:#aaa;display:flex;align-items:center;gap:3px;margin-left:auto"><input type="checkbox" v-model="cameraBone" style="margin:0" />Camera</label>
 </div>
 <div class="tm-tabs">
 <div class="tab" :class="{active: tab==='files'}" @click="tab='files'">Files ({{ filesCount }})</div>
@@ -562,7 +594,7 @@ Interface.definePanels(function() {
                     status: 'Ready', branch: '', tab: 'geo',
                     items: [], gits: [], recent: [],
                     checked: {}, launching: false, bbProject: null,
-                    syncPose: true, _launchInterval: null,
+                    syncPose: true, cameraBone: false, _launchInterval: null,
                     projectRoot: ROOT,
                     suits: [], suitSearch: '', suitEdit: null, suitTab: 'abilities',
                 };
@@ -668,6 +700,7 @@ Interface.definePanels(function() {
                                     name, length: ad.animation_length || 1, loop,
                                     animators: convertBones(ad.bones || {}),
                                 }).add();
+                                importEffects(anim, ad);
                                 anim.path = f.path;
                                 anim.saved = true;
                                 anim.calculateSnappingFromKeyframes();
@@ -705,12 +738,11 @@ Interface.definePanels(function() {
                         }
                         for (const a of anims) {
                             const n = a.name || a.uuid || 'animation';
-                            out.animations[n] = {
-                                animation_length: a.length || a.animation_length || 1,
-                                loop: a.loop || false,
-                                bones: a.bones || {},
-                            };
-                            if (a.thematic) out.animations[n].thematic = a.thematic;
+                            let compiled = AnimationCodec.codecs.bedrock.compileAnimation(a);
+                            let entry = {};
+                            Object.assign(entry, compiled);
+                            if (a.thematic) entry.thematic = a.thematic;
+                            out.animations[n] = entry;
                         }
                         if (writeJSON(fp, out)) c++;
                     }
@@ -940,6 +972,27 @@ Interface.definePanels(function() {
                     }
                 },
             },
+            watch: {
+                cameraBone(val) {
+                    const anim = Animation.selected;
+                    if (!anim) return;
+                    const key = 'camera';
+                    if (val) {
+                        if (!anim.animators[key]) {
+                            const uuid = key;
+                            anim.animators[key] = new BoneAnimator(uuid, anim, 'camera');
+                            anim.animators[key].addToTimeline();
+                        }
+                    } else {
+                        if (anim.animators[key]) {
+                            if (Timeline) anim.animators[key].removeFromTimeline();
+                            delete anim.animators[key];
+                        }
+                    }
+                    if (Timeline) Timeline.update();
+                    Animator.preview();
+                },
+            },
             created() {
                 this.refresh();
                 console.log('[Thematic] Panel created, ROOT:', ROOT);
@@ -959,6 +1012,36 @@ Interface.definePanels(function() {
                 }
                 Blockbench.on('thematic_import', () => {
                     setTimeout(() => self.syncAnimations(), 300);
+                });
+                Blockbench.on('select_animation', () => {
+                    const anim = Animation.selected;
+                    self.cameraBone = !!(anim && anim.animators && anim.animators['camera']);
+                });
+                Blockbench.on('display_animation_frame', () => {
+                    if (!this.cameraBone) return;
+                    const anim = Animation.selected;
+                    if (!anim) return;
+                    const camAnim = anim.animators && anim.animators['camera'];
+                    if (!camAnim || !camAnim.keyframes.length) return;
+                    let preview = Preview.selected;
+                    if (!preview) return;
+                    let rot = camAnim.interpolate('rotation', true);
+                    let pos = camAnim.interpolate('position', true);
+                    if (rot) {
+                        preview.camera.position.set(0, 0, 0);
+                        preview.controls.target.set(0, 0, 16);
+                        let euler = new THREE.Euler(
+                            Math.degToRad(-rot.x),
+                            Math.degToRad(-rot.y),
+                            Math.degToRad(rot.z),
+                            'ZYX'
+                        );
+                        preview.controls.target.applyEuler(euler);
+                        if (pos) {
+                            preview.camera.position.set(pos.x, pos.y, pos.z);
+                        }
+                        preview.controls.target.add(preview.camera.position);
+                    }
                 });
                 setInterval(() => this.refresh(), 8000);
                 setInterval(() => self.syncToGame(), 100);
