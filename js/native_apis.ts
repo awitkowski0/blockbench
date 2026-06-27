@@ -8,6 +8,7 @@ const fs: typeof import("node:fs") = window.require('node:fs');
 const NodeBuffer: typeof import("node:buffer") = window.require('buffer');
 const zlib: typeof import("node:zlib") = window.require('zlib');
 const child_process: typeof import("node:child_process") = window.require('child_process');
+const http: typeof import("node:http") = window.require('http');
 const https: typeof import("node:https") = window.require('https');
 const PathModule: typeof import("node:path") = window.require('path');
 const os: typeof import("node:os") = window.require('os');
@@ -18,7 +19,7 @@ const clipboard = electron.clipboard;
 /** @internal */
 export {
 	electron, clipboard, shell, ipcRenderer, webUtils,
-	app, fs, NodeBuffer, zlib, child_process, https, PathModule, os, currentwindow, dialog,
+	app, fs, NodeBuffer, zlib, child_process, http, https, PathModule, os, currentwindow, dialog,
 	Buffer, nativeImage
 }
 

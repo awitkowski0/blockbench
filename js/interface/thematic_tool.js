@@ -1,24 +1,33 @@
 import { BARS } from "./toolbars";
 import { Interface } from "./interface";
-import { fs, PathModule, child_process, os, process } from "../native_apis";
+import { fs, PathModule, child_process, os, process, http } from "../native_apis";
 import { loadModelFile } from "../io/io";
 import { Animation } from "../animations/animation";
 
 const IS_WIN = os.platform() === 'win32';
-const CURL = IS_WIN ? 'curl.exe' : 'curl';
 const GRADLEW = IS_WIN ? 'gradlew.bat' : './gradlew';
 
-function curlPost(url, body) {
-    const dir = (typeof app !== 'undefined' && app.getPath) ? app.getPath('temp') : os.tmpdir();
-    const tmp = PathModule.join(dir, `thematic_${Date.now()}.json`);
-    fs.writeFileSync(tmp, body, 'utf-8');
-    child_process.exec(`${CURL} -s --max-time 0.5 -X POST -H "Content-Type: application/json" -d @${tmp} ${url}`, { env: process.env }, () => {});
-    setTimeout(() => { try { fs.unlinkSync(tmp); } catch (e) {} }, 1000);
+function httpPost(url, body) {
+    try {
+        const u = new URL(url);
+        const payload = Buffer.from(body, 'utf-8');
+        const req = http.request({
+            hostname: u.hostname, port: u.port, path: u.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+            timeout: 500,
+        });
+        req.write(payload);
+        req.end();
+    } catch (e) { /* silently ignore */ }
 }
 
 function statusCheck() {
     try {
-        child_process.execSync(`${CURL} -s --max-time 2 http://localhost:8000/api/status`, { timeout: 3000, encoding: 'utf-8', env: process.env });
+        child_process.execSync(
+            `node -e "require('http').get('http://localhost:8000/api/status',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"`,
+            { timeout: 5000, stdio: 'ignore', env: process.env }
+        );
         return true;
     } catch (e) { return false; }
 }
@@ -344,8 +353,7 @@ const THEMATIC_STYLES = `
 .tm-sep{height:1px;background:#333;margin:4px 8px;}
 .tm-hint{font-size:11px;color:#888;padding:4px 8px;text-align:center;font-style:italic;}
 .tm-banner{padding:6px 8px;margin:4px 8px 0;border-radius:3px;font-size:11px;text-align:center;background:#1e3a5f;color:#6af;flex-shrink:0}
-#animation_toolbar [action="add_animation_controller"],
-#animation_toolbar [action="load_animation_file"]{display:none !important}
+#animation_toolbar [action="add_animation_controller"]{display:none !important}
 `;
 
 // CSS is injected in the panel's component, not at module level
@@ -594,7 +602,7 @@ Interface.definePanels(function() {
                     status: 'Ready', branch: '', tab: 'geo',
                     items: [], gits: [], recent: [],
                     checked: {}, launching: false, bbProject: null,
-                    syncPose: true, cameraBone: false, _launchInterval: null,
+                    syncPose: true, cameraBone: false, _launchInterval: null, _childProcess: null,
                     projectRoot: ROOT,
                     suits: [], suitSearch: '', suitEdit: null, suitTab: 'abilities',
                 };
@@ -754,7 +762,7 @@ Interface.definePanels(function() {
                         const name = PathModule.basename(fp);
                         const content = JSON.stringify(readJSON(fp));
                         const payload = JSON.stringify({ file: name, content });
-                        curlPost('http://localhost:8000/api/reload', payload);
+                        httpPost('http://localhost:8000/api/reload', payload);
                     }
                     this._lastSync = null;
                     this.syncToGame();
@@ -767,7 +775,7 @@ Interface.definePanels(function() {
                         const fp = PathModule.join(dir, n.trim() + '.animation.json');
                         if (fs.existsSync(fp)) { Blockbench.showMessageBox({ title: 'Error', message: 'Already exists.', icon: 'warning' }); return; }
                         writeJSON(fp, { format_version: '1.8.0', animations: { [n.trim()]: { animation_length: 1, loop: false, bones: {} } } });
-                        this.refresh();
+                        this.syncAnimations();
                     });
                 },
                 openFile(it) {
@@ -783,28 +791,53 @@ Interface.definePanels(function() {
                     if (!msg) { Blockbench.showMessageBox({ title: 'Error', message: 'Enter a message.', icon: 'warning' }); return; }
                     const selected = this.gits.filter(f => this.checked[f.path]);
                     if (!selected.length) { Blockbench.showMessageBox({ title: 'Error', message: 'No files selected.', icon: 'warning' }); return; }
-                    const base = baseBranch();
-                    const current = currentBranch();
-                    let target = current;
-                    if (target === base) {
-                        const ts = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-                        target = base + '-anim/' + ts;
-                        git(['checkout', '-b', target]);
-                    }
+                    const target = 'v1.20.1';
                     for (const f of selected) {
                         git(['add', '--', f.path]);
                     }
                     const c = git(['commit', '-m', msg]);
                     if (!c.ok) { Blockbench.showMessageBox({ title: 'Error', message: c.err, icon: 'error' }); return; }
-                    const pu = git(['push', '--set-upstream', 'origin', target]);
-                    if (!pu.ok) { Blockbench.showMessageBox({ title: 'Error', message: pu.err, icon: 'error' }); return; }
-                    if (target !== base) git(['checkout', base]);
+                    const pu = git(['push', '-u', 'origin', target]);
+                    if (pu.ok) {
+                        this.cmsg = '';
+                        this.checked = {};
+                        this.refresh();
+                        this.recent.unshift('Pushed: ' + target);
+                        this.status = 'Pushed to ' + target;
+                        Blockbench.showQuickMessage('Pushed to ' + target, 3000);
+                        return;
+                    }
+                    // Direct push failed — try to rebase on remote
+                    git(['fetch', 'origin', target]);
+                    const rebase = git(['rebase', 'origin/' + target]);
+                    if (rebase.ok) {
+                        const pu2 = git(['push', '-u', 'origin', target]);
+                        if (pu2.ok) {
+                            this.cmsg = '';
+                            this.checked = {};
+                            this.refresh();
+                            this.recent.unshift('Pushed: ' + target);
+                            this.status = 'Pushed to ' + target + ' (rebased)';
+                            Blockbench.showQuickMessage('Pushed to ' + target, 3000);
+                            return;
+                        }
+                    } else {
+                        git(['rebase', '--abort']);
+                    }
+                    // Rebase failed or push still failing — create a feature branch
+                    const ts = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                    const branch = target + '-anim/' + ts;
+                    git(['checkout', '-b', branch]);
+                    const pb = git(['push', '-u', 'origin', branch]);
+                    if (!pb.ok) { Blockbench.showMessageBox({ title: 'Error', message: pb.err, icon: 'error' }); return; }
+                    git(['checkout', target]);
+                    git(['reset', '--hard', 'origin/' + target]);
                     this.cmsg = '';
                     this.checked = {};
                     this.refresh();
-                    this.recent.unshift('Pushed: ' + target);
-                    this.status = target !== base ? 'Pushed ' + target + ', back on ' + base : 'Pushed ' + target;
-                    Blockbench.showQuickMessage('Pushed to ' + target, 3000);
+                    this.recent.unshift('Pushed: ' + branch);
+                    this.status = 'Pushed ' + branch + ', back on ' + target + '. Create a PR manually.';
+                    Blockbench.showQuickMessage('Pushed to ' + branch + ' (merge conflict). Create a PR manually.', 5000);
                 },
                 toggleAll() {
                     const all = this.gits.every(f => this.checked[f.path]);
@@ -858,12 +891,22 @@ Interface.definePanels(function() {
                     const self = this;
                     if (statusCheck()) { self.launching = 'running'; return; }
                     if (self._launchInterval) { clearInterval(self._launchInterval); self._launchInterval = null; }
+                    if (self._childProcess) { self._childProcess = null; }
                     this.launching = true;
                     console.log('[Thematic] Launching game from:', ROOT);
                     Blockbench.showQuickMessage('Launching Minecraft client...', 2000);
                     try {
-                        child_process.exec(`${GRADLEW} runClient`, { cwd: ROOT, env: process.env });
-                        console.log('[Thematic] Gradle command issued');
+                        const cp = child_process.exec(`${GRADLEW} runClient`, { cwd: ROOT, env: process.env }, (err, stdout, stderr) => {
+                            if (err) {
+                                console.error('[Thematic] Gradle process exited with error:', err.message);
+                                if (self.launching === true) {
+                                    self.launching = false;
+                                    if (self._launchInterval) { clearInterval(self._launchInterval); self._launchInterval = null; }
+                                }
+                            }
+                        });
+                        self._childProcess = cp;
+                        console.log('[Thematic] Gradle command issued, pid:', cp.pid);
                     } catch (e) {
                         console.error('[Thematic] Launch failed:', e.message);
                         this.launching = false;
@@ -882,6 +925,24 @@ Interface.definePanels(function() {
                 onKill() {
                     console.log('[Thematic] Killing game...');
                     if (this._launchInterval) { clearInterval(this._launchInterval); this._launchInterval = null; console.log('[Thematic] Stopped launch polling'); }
+                    if (this._childProcess) {
+                        try {
+                            const pid = this._childProcess.pid;
+                            if (pid) {
+                                if (IS_WIN) {
+                                    child_process.execSync(`taskkill /F /T /PID ${pid} 2>nul`, { timeout: 5000, encoding: 'utf-8', env: process.env });
+                                } else {
+                                    process.kill(-pid, 'SIGTERM');
+                                }
+                                this._childProcess = null;
+                                this.launching = false;
+                                console.log('[Thematic] Game killed via child process');
+                                Blockbench.showQuickMessage('Game killed', 2000);
+                                return;
+                            }
+                        } catch (e) { console.log('[Thematic] Targeted kill failed, falling back:', e.message); }
+                        this._childProcess = null;
+                    }
                     try {
                         if (IS_WIN) {
                             child_process.execSync('taskkill /F /IM java.exe 2>nul', { timeout: 5000, encoding: 'utf-8', env: process.env });
@@ -906,7 +967,7 @@ Interface.definePanels(function() {
                     });
                     if (data === this._lastSync) return;
                     this._lastSync = data;
-                    curlPost('http://localhost:8000/api/animation', data);
+                    httpPost('http://localhost:8000/api/animation', data);
                 },
                 openSuit(s) {
                     this.suitEdit = JSON.parse(JSON.stringify(s));
@@ -1012,6 +1073,22 @@ Interface.definePanels(function() {
                 }
                 Blockbench.on('thematic_import', () => {
                     setTimeout(() => self.syncAnimations(), 300);
+                });
+                Blockbench.on('load_animation', ({ animation }) => {
+                    const dir = armorDir();
+                    if (!dir || !animation.path || animation.path.startsWith(dir)) return;
+                    const destPath = PathModule.join(dir, PathModule.basename(animation.path));
+                    try {
+                        const content = fs.readFileSync(animation.path, 'utf-8');
+                        fs.writeFileSync(destPath, content, 'utf-8');
+                        Animation.all.filter(a => a.path === animation.path).forEach(a => {
+                            a.path = destPath;
+                            a.saved = true;
+                        });
+                        const rel = PathModule.relative(ROOT, destPath);
+                        git(['add', '--', rel]);
+                        self.refresh();
+                    } catch (e) { console.error('[Thematic] Failed to handle imported animation:', e); }
                 });
                 Blockbench.on('select_animation', () => {
                     const anim = Animation.selected;
