@@ -1,16 +1,16 @@
 import { BBPlugin } from "./plugin_loader";
 import { createScopedFS } from "./util/scoped_fs";
 
-const electron: typeof import("@electron/remote") = require('@electron/remote');
-const {shell, nativeImage, ipcRenderer, webUtils} = require('electron') as typeof import('electron');
+const electron: typeof import("@electron/remote") = window.require('@electron/remote');
+const {shell, nativeImage, ipcRenderer, webUtils} = window.require('electron') as typeof import('electron');
 const app = electron.app;
-const fs: typeof import("node:fs") = require('node:fs');
-const NodeBuffer: typeof import("node:buffer") = require('buffer');
-const zlib: typeof import("node:zlib") = require('zlib');
-const child_process: typeof import("node:child_process") = require('child_process');
-const https: typeof import("node:https") = require('https');
-const PathModule: typeof import("node:path") = require('path');
-const os: typeof import("node:os") = require('os');
+const fs: typeof import("node:fs") = window.require('node:fs');
+const NodeBuffer: typeof import("node:buffer") = window.require('buffer');
+const zlib: typeof import("node:zlib") = window.require('zlib');
+const child_process: typeof import("node:child_process") = window.require('child_process');
+const https: typeof import("node:https") = window.require('https');
+const PathModule: typeof import("node:path") = window.require('path');
+const os: typeof import("node:os") = window.require('os');
 const currentwindow = electron.getCurrentWindow();
 const dialog = electron.dialog;
 const clipboard = electron.clipboard;
@@ -199,7 +199,7 @@ function getModule(module_name: string, plugin_id: string, plugin: PluginOrDevTo
 		return api;
 	}
 
-	return require(module_name);
+	return originalRequire(module_name);
 }
 
 /**
@@ -211,8 +211,8 @@ export function getPluginScopedRequire(plugin: PluginOrDevTools) {
 		return getModule(module_id, plugin_id, plugin, options);
 	}
 }
-const originalRequire = window.require;
-delete window.require;
+	const originalRequire = window.require;
+	delete window.require;
 
 /**
  * Revoke the permissions of a plugin
